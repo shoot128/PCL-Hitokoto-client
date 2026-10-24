@@ -1,2 +1,2 @@
 动态（推荐，DNS/证书修复后使用）：https://yiyan.overpass.top/Custom.xaml
-静态（当前可用，不会自动换句）：https://raw.githubusercontent.com/shoot128/PCL-Hitokoto-client/main/single/Custom.xaml
+静态（当前可用，不会自动换句）：https://cdn.jsdelivr.net/gh/shoot128/PCL-Hitokoto-client@main/single/Custom.xaml

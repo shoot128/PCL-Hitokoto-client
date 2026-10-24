@@ -14,6 +14,12 @@ https://yiyan.overpass.top/Custom.xaml
 
 PCL 会自动请求 `Custom.xaml.ini`，然后只下载一个 `Custom.xaml`。单文件版由服务端把当前一言写进页面，不需要 `Hitokoto.ps1`、`HitokotoRun.vbs` 或 `Hitokoto\`。
 
+如果域名/证书还没切好，先用 jsDelivr 静态兜底（现在可打开，但不会自动换句）：
+
+```text
+https://cdn.jsdelivr.net/gh/shoot128/PCL-Hitokoto-client@main/single/Custom.xaml
+```
+
 单文件版保留展示、复制和打开链接；本地搜索、自定义 API、完整句库下载只在下面的完整版中提供。
 
 ## 功能

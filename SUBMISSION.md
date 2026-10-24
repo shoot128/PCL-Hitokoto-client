@@ -17,6 +17,14 @@ https://yiyan.overpass.top/Custom.xaml
 
 PCL 会自动请求 `https://yiyan.overpass.top/Custom.xaml.ini` 检查版本。服务端在返回 XAML 前把当前一言写进页面，所以 PCL 只下载这一个文件，不需要本地脚本。
 
+如果域名/证书还没切好、投稿方要求链接现在就能打开，先用 jsDelivr 静态兜底：
+
+```text
+https://cdn.jsdelivr.net/gh/shoot128/PCL-Hitokoto-client@main/single/Custom.xaml
+```
+
+它同样只下载一个 `Custom.xaml`，同目录 `.ini` 已上传；但静态版不会自动换句，正式版仍建议用上面的服务器动态链接。
+
 单文件版保留展示、复制和打开链接；**本地搜索、自定义 API、完整句库下载只在完整版中提供**，投稿时不要把这些功能算到单文件版头上。
 
 ## 短版（Issue / 评论区）

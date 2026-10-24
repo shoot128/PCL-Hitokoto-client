@@ -52,10 +52,16 @@ https://yiyan.overpass.top/Custom.xaml.ini
 静态兜底链接（已上传，当前可直接打开）：
 
 ```text
-https://raw.githubusercontent.com/shoot128/PCL-Hitokoto-client/main/single/Custom.xaml
+https://cdn.jsdelivr.net/gh/shoot128/PCL-Hitokoto-client@main/single/Custom.xaml
 ```
 
 同目录的 `single/Custom.xaml.ini` 也已上传，所以 PCL 能正常走“版本检查 → 下载 Custom.xaml”的流程。但静态 `.ini` 不会变化，因此它不会自动换句；如果要每次启动/点击“换一句”都换，请使用上面的服务器动态链接。
+
+GitHub Raw 原始地址（部分网络可能无法直连）：
+
+```text
+https://raw.githubusercontent.com/shoot128/PCL-Hitokoto-client/main/single/Custom.xaml
+```
 
 ## 安全边界
 
