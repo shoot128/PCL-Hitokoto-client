@@ -4,6 +4,18 @@
 
 配套服务端：[PCL-Hitokoto-server](https://github.com/shoot128/PCL-Hitokoto-server)
 
+## 只收单个 `Custom.xaml`？
+
+用仓库里的 `single/` 单文件联网版。PCL 的“主页更新链接”填：
+
+```text
+https://yiyan.overpass.top/Custom.xaml
+```
+
+PCL 会自动请求 `Custom.xaml.ini`，然后只下载一个 `Custom.xaml`。单文件版由服务端把当前一言写进页面，不需要 `Hitokoto.ps1`、`HitokotoRun.vbs` 或 `Hitokoto\`。
+
+单文件版保留展示、复制和打开链接；本地搜索、自定义 API、完整句库下载只在下面的完整版中提供。
+
 ## 功能
 
 - 联网获取一言，连续获取到同一句时自动重试
@@ -24,6 +36,15 @@ Hitokoto/
   offline.json               内置离线库（12 条公版古诗文）
   config.example.json        API / 句库地址示例
   README.txt                 详细使用说明与排错
+
+single/
+  Custom.xaml                单文件联网版静态快照
+  Custom.xaml.ini            静态快照版本号
+  README.md                  单文件版说明与更新链接
+
+SECURITY.md                  权限边界与安全说明
+SUBMISSION.md                投稿 / 推荐文案
+SHA256SUMS.txt               发布文件 SHA-256 校验值
 ```
 
 运行时自动生成、未纳入仓库的文件：
@@ -36,7 +57,15 @@ Hitokoto/library.json        从服务端下载的完整句库
 Hitokoto/hitokoto.log        运行日志
 ```
 
-## 安装
+## 单文件版安装
+
+1. 打开 PCL → 设置 → 个性化 → 主页。
+2. 选择“联网下载”/“自定义主页地址”，填写 `https://yiyan.overpass.top/Custom.xaml`。
+3. 回到主页按 `F5`。PCL 会自动请求 `Custom.xaml.ini`，然后只下载 `Custom.xaml`。
+
+不需要复制 `Hitokoto.ps1`、`HitokotoRun.vbs` 或 `Hitokoto\`。
+
+## 完整版安装
 
 1. 打开 PCL 数据文件夹（PCL 启动器目录下的 `PCL` 文件夹）。
 2. 把仓库根目录的以下内容复制到 **PCL 数据文件夹根目录**：
@@ -95,7 +124,16 @@ API 设置（支持自建实例）      默认折叠
 - Windows PowerShell 5.1+
 - Windows Script Host（`wscript.exe`）未被禁用
 
-脚本只访问你配置的 API / 句库地址，不上传本地文件。API Token 不保存在客户端。
+脚本只访问你配置的 API / 句库地址，不上传本地文件。客户端不单独保存 Token；请勿把长期 Token 放在 API URL 的查询参数中，否则它会随地址写入 `Hitokoto\config.json`。
+
+## 安全与校验
+
+- 权限边界、网络行为、隐私说明见 [SECURITY.md](SECURITY.md)。
+- 发布文件哈希见 [SHA256SUMS.txt](SHA256SUMS.txt)；下载后先核对再运行。
+- 不申请管理员权限，不创建服务 / 驱动 / 计划任务 / 启动项。
+- 只写 `HKCU\Software\PCL*` 和 `PCL\Hitokoto\`，不碰 `Program Files` / `System32`。
+- 剪贴板只在点击“从剪贴板搜索”时读取，日志不记录原文。
+- 投稿或推荐文案见 [SUBMISSION.md](SUBMISSION.md)。
 
 ## 许可证
 

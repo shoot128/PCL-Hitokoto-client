@@ -21,7 +21,7 @@ Custom.xaml 里的命令使用相对路径：
 
 HitokotoRun.vbs 会在同目录以隐藏窗口启动：
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File "Hitokoto.ps1" ...
+  powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "Hitokoto.ps1" ...
 
 这样点击按钮时不会闪出 PowerShell 控制台窗口。
 PCL 2.99 执行“打开文件 / 执行命令”时，会把工作目录设置为
@@ -69,7 +69,7 @@ Custom.xaml、HitokotoRun.vbs、Hitokoto.ps1 和 Hitokoto 文件夹
    - 内置离线库：Hitokoto\offline.json（12 条公版古诗文）；
    - 联网获取的句子自动追加到 Hitokoto\quotes.json；
    - 从服务器下载的句库保存为 Hitokoto\library.json；
-   - 联网缓存上限 500 条；服务器句库不设硬上限，
+   - 联网缓存上限 500 条；服务器句库上限 5 万条，
      建议不超过 2 万条以保证搜索速度；
    - 断网时不影响内置离线库和已下载句库的使用。
 
@@ -220,7 +220,7 @@ PCL 2.99 的 Custom.xaml 是纯声明式 WPF XAML：
    搜索时如果含英文双引号，请用“复制关键词 →
    从剪贴板搜索”。
 4. 搜索结果最多展示 5 条；联网缓存最多保留 500 条；
-   服务器句库不设硬上限，但建议不超过 2 万条，避免搜索过慢。
+   服务器句库上限 5 万条，建议不超过 2 万条，避免搜索过慢。
 5. 本页按 PCL 2.99 快照版的变量与事件机制编写。
    PCL 社区版（PCL CE）使用不同的自定义变量存储方式，
    未做兼容验证。
@@ -249,3 +249,37 @@ PCL 2.99 的 Custom.xaml 是纯声明式 WPF XAML：
   文件夹保持在一起，相对路径应继续可用；
 - 隐藏启动测试：点击“换一句”，确认不再闪出 PowerShell
   控制台窗口，但 hitokoto.log 仍有新增记录。
+
+九、安全与校验
+------------------------------------------------------------
+1. 权限边界
+   - 不申请管理员权限，不创建服务、驱动、计划任务或启动项；
+   - 只写 HKCU\Software\PCL* 和 PCL\Hitokoto\；
+   - 只访问你填写的 API / 句库地址，不上传本地文件；
+   - 不调用 Invoke-Expression，不下载后执行任何文件；
+   - 剪贴板只在点击“从剪贴板搜索”时读取，日志不记录原文。
+
+2. 输入限制
+   - API / 句库地址只接受 http:// 或 https://；
+   - 地址不能包含空格、英文双引号、账号密码、# 或控制字符；
+   - API 响应上限 256 KiB，句库响应上限 16 MiB、最多 5 万条。
+
+3. 校验哈希
+   仓库根目录的 SHA256SUMS.txt 记录发布文件哈希。下载后执行：
+
+     Get-FileHash .\Hitokoto.ps1 -Algorithm SHA256
+     Get-FileHash .\HitokotoRun.vbs -Algorithm SHA256
+     Get-FileHash .\Custom.xaml -Algorithm SHA256
+     Get-FileHash .\Hitokoto\offline.json -Algorithm SHA256
+
+   与 SHA256SUMS.txt 对应行比较；不一致时不要运行。
+
+4. 残余风险
+   - HitokotoRun.vbs 使用 -ExecutionPolicy Bypass，因为下载包可能
+     带“来自 Internet”标记；脚本是明文可读的，但仍应核对哈希；
+   - 自定义 API 返回的文字只显示/复制，不会执行，但要警惕诈骗内容；
+   - 不要把长期 Token 放在 API URL 查询参数中，否则它会随地址
+     写入 config.json，并显示在 API 设置输入框；
+   - 本地 JSON 和日志未加密，同一用户下的其他程序可以读取。
+
+更完整的说明见客户端根目录的 SECURITY.md。

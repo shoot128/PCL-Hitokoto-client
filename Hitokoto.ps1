@@ -25,7 +25,8 @@ param(
     [string]$Action = 'next',
     [string]$Query = '',
     [string]$ApiUrl = '',
-    [string]$LibraryUrl = ''
+    [string]$LibraryUrl = '',
+    [switch]$NoRefresh
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +42,14 @@ $script:StateFile   = Join-Path $script:DataDir 'state.json'
 $script:NoneText    = '（无）'
 $script:DefaultApiUrl = 'https://v1.hitokoto.cn/'
 $script:LibraryCountCache = $null
+
+# 防御性上限：避免恶意或异常服务端用超大响应拖垮客户端。
+$script:MaxApiBytes       = 262144
+$script:MaxLibraryBytes   = 16777216
+$script:MaxLibraryItems   = 50000
+$script:MaxQuoteTextLength = 2000
+$script:MaxMetaLength     = 200
+$script:MaxIdLength       = 128
 
 # 当 offline.json 丢失时使用的兜底数据。
 $script:EmbeddedOffline = @(
@@ -145,10 +154,45 @@ function Save-Config {
     Write-JsonFile -Path $script:ConfigFile -Object $payload
 }
 
+function Test-WebUrl {
+    param(
+        [string]$Url,
+        [int]$MaxLength = 2048
+    )
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $false }
+    $value = $Url.Trim()
+    if ($value.Length -gt $MaxLength) { return $false }
+    if ($value -notmatch '^https?://') { return $false }
+    # 拒绝空白、引号、尖括号、管道、井号等会在命令行或 URI 中产生歧义的字符。
+    if ($value -match '[\x00-\x20\x7F"<>|^`#]') { return $false }
+    try {
+        $uri = [Uri]$value
+        if ($uri.Scheme -ne 'http' -and $uri.Scheme -ne 'https') { return $false }
+        if ([string]::IsNullOrWhiteSpace($uri.Host)) { return $false }
+        # 客户端不支持 Basic Auth；禁止把账号密码写进 URL，避免被写进日志。
+        if (-not [string]::IsNullOrWhiteSpace($uri.UserInfo)) { return $false }
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-SafeUrlForLog {
+    param([string]$Url)
+    try {
+        # 只保留 scheme + host + path，避免把查询参数里的 Token 写进日志/状态。
+        return ([Uri]$Url).GetLeftPart([UriPartial]::Path)
+    }
+    catch {
+        return '(无效地址)'
+    }
+}
+
 function Get-ApiUrl {
     $cfg = Get-Config
     $url = ([string]$cfg.apiUrl).Trim()
-    if ([string]::IsNullOrWhiteSpace($url) -or -not ($url -match '^https?://')) {
+    if ([string]::IsNullOrWhiteSpace($url) -or -not (Test-WebUrl -Url $url)) {
         return $script:DefaultApiUrl
     }
     return $url
@@ -202,6 +246,17 @@ function Save-Library {
     $script:LibraryCountCache = @($Quotes).Count
 }
 
+function Limit-Text {
+    param(
+        [string]$Value,
+        [int]$MaxLength
+    )
+    if ($null -eq $Value) { return '' }
+    $text = ([string]$Value).Trim()
+    if ($MaxLength -le 0 -or $text.Length -le $MaxLength) { return $text }
+    return $text.Substring(0, $MaxLength) + '…'
+}
+
 function Read-QuoteFile {
     param(
         [string]$Path,
@@ -211,6 +266,11 @@ function Read-QuoteFile {
     if (-not (Test-Path -LiteralPath $Path)) { return @() }
 
     try {
+        $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($file.Length -gt $script:MaxLibraryBytes) {
+            throw ("文件超过大小限制（{0} 字节）" -f $script:MaxLibraryBytes)
+        }
+
         $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
         if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
 
@@ -233,14 +293,14 @@ function Read-QuoteFile {
             if ([string]::IsNullOrWhiteSpace($text)) { continue }
 
             [void]$result.Add([pscustomobject]@{
-                id        = [string]$item.id
-                text      = $text.Trim()
-                source    = [string]$item.source
-                author    = [string]$item.author
-                type      = [string]$item.type
-                typeCode  = [string]$item.typeCode
-                createdAt = [string]$item.createdAt
-                fetchedAt = [string]$item.fetchedAt
+                id        = (Limit-Text -Value ([string]$item.id) -MaxLength $script:MaxIdLength)
+                text      = (Limit-Text -Value $text -MaxLength $script:MaxQuoteTextLength)
+                source    = (Limit-Text -Value ([string]$item.source) -MaxLength $script:MaxMetaLength)
+                author    = (Limit-Text -Value ([string]$item.author) -MaxLength $script:MaxMetaLength)
+                type      = (Limit-Text -Value ([string]$item.type) -MaxLength 40)
+                typeCode  = (Limit-Text -Value ([string]$item.typeCode) -MaxLength 10)
+                createdAt = (Limit-Text -Value ([string]$item.createdAt) -MaxLength 40)
+                fetchedAt = (Limit-Text -Value ([string]$item.fetchedAt) -MaxLength 80)
                 origin    = $Origin
             })
         }
@@ -433,6 +493,35 @@ function Get-FirstString {
     return ''
 }
 
+function Get-WebText {
+    param(
+        [string]$Url,
+        [int]$TimeoutSec = 6,
+        [int64]$MaxBytes = 262144,
+        [string]$Label = '响应'
+    )
+    $headers = @{
+        'User-Agent'      = 'PCL-Hitokoto-Homepage/1.0'
+        'Accept'          = 'application/json'
+        'Accept-Encoding' = 'identity'
+    }
+    $response = Invoke-WebRequest -Uri $Url -Headers $headers -TimeoutSec $TimeoutSec -UseBasicParsing -MaximumRedirection 3
+
+    if ($null -ne $response.RawContentLength -and [int64]$response.RawContentLength -gt $MaxBytes) {
+        throw ("{0}超过大小限制（{1} 字节）" -f $Label, $MaxBytes)
+    }
+    if ($null -ne $response.RawContentStream) {
+        $bytes = $response.RawContentStream.ToArray()
+    }
+    else {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$response.Content)
+    }
+    if ($bytes.Length -gt $MaxBytes) {
+        throw ("{0}超过大小限制（{1} 字节）" -f $Label, $MaxBytes)
+    }
+    return ([System.Text.Encoding]::UTF8.GetString($bytes)).TrimStart([char]0xFEFF)
+}
+
 function Invoke-HitokotoApi {
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -441,22 +530,8 @@ function Invoke-HitokotoApi {
 
     $apiUrl = Get-ApiUrl
     $uri = Build-ApiUri -BaseUrl $apiUrl
-    $headers = @{
-        'User-Agent'      = 'PCL-Hitokoto-Homepage/1.0'
-        'Accept'          = 'application/json'
-        'Accept-Encoding' = 'identity'
-    }
+    $jsonText = Get-WebText -Url $uri -TimeoutSec 6 -MaxBytes $script:MaxApiBytes -Label 'API 响应'
 
-    $response = Invoke-WebRequest -Uri $uri -Headers $headers -TimeoutSec 6 -UseBasicParsing
-    if ($null -ne $response.RawContentStream) {
-        $bytes = $response.RawContentStream.ToArray()
-        $jsonText = [System.Text.Encoding]::UTF8.GetString($bytes)
-    }
-    else {
-        $jsonText = [string]$response.Content
-    }
-
-    $jsonText = $jsonText.TrimStart([char]0xFEFF)
     $data = $jsonText | ConvertFrom-Json
     $payload = $data
 
@@ -474,7 +549,7 @@ function Invoke-HitokotoApi {
         }
     }
 
-    $text = Get-FirstString -Item $payload -Names @('hitokoto', 'text', 'quote', 'content')
+    $text = Limit-Text -Value (Get-FirstString -Item $payload -Names @('hitokoto', 'text', 'quote', 'content')) -MaxLength $script:MaxQuoteTextLength
     if ([string]::IsNullOrWhiteSpace($text)) {
         throw 'API 返回的句子为空'
     }
@@ -483,6 +558,8 @@ function Invoke-HitokotoApi {
     $typeName = $typeRaw
     if ($typeRaw.Length -eq 1) { $typeName = Get-TypeName $typeRaw }
     if ([string]::IsNullOrWhiteSpace($typeName)) { $typeName = '其他' }
+    $typeName = Limit-Text -Value $typeName -MaxLength 40
+    $typeRaw = Limit-Text -Value $typeRaw -MaxLength 10
 
     $createdAt = ''
     try {
@@ -494,13 +571,13 @@ function Invoke-HitokotoApi {
     catch { $createdAt = '' }
 
     return [pscustomobject]@{
-        id        = (Get-FirstString -Item $payload -Names @('uuid', 'id'))
-        text      = $text.Trim()
-        source    = (Get-FirstString -Item $payload -Names @('from', 'source'))
-        author    = (Get-FirstString -Item $payload -Names @('from_who', 'author'))
+        id        = (Limit-Text -Value (Get-FirstString -Item $payload -Names @('uuid', 'id')) -MaxLength $script:MaxIdLength)
+        text      = $text
+        source    = (Limit-Text -Value (Get-FirstString -Item $payload -Names @('from', 'source')) -MaxLength $script:MaxMetaLength)
+        author    = (Limit-Text -Value (Get-FirstString -Item $payload -Names @('from_who', 'author')) -MaxLength $script:MaxMetaLength)
         type      = $typeName
         typeCode  = $typeRaw
-        createdAt = $createdAt
+        createdAt = (Limit-Text -Value $createdAt -MaxLength 40)
         fetchedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         origin    = 'online'
     }
@@ -533,12 +610,8 @@ function Invoke-SetApi {
         Set-PclVariable 'HitokotoApiStatus' '请输入 API 地址，例如 https://v1.hitokoto.cn/'
         return
     }
-    if (-not ($url -match '^https?://')) {
-        Set-PclVariable 'HitokotoApiStatus' 'API 地址必须以 http:// 或 https:// 开头。'
-        return
-    }
-    if ($url -match '[\r\n"]') {
-        Set-PclVariable 'HitokotoApiStatus' 'API 地址不能包含英文双引号或换行。'
+    if (-not (Test-WebUrl -Url $url)) {
+        Set-PclVariable 'HitokotoApiStatus' 'API 地址无效：仅支持 http/https，且不能包含空格、引号、账号密码或控制字符。'
         return
     }
 
@@ -556,8 +629,8 @@ function Invoke-SetApi {
             Write-HitokotoLog ('写入 quotes.json 失败：' + $_.Exception.Message)
         }
         Set-PclQuoteVariables -Quote $quote -Status '● 在线 · 自定义 API 测试成功' -Info (Get-QuoteInfo -Quote $quote -Mode '来源：自定义 API')
-        Set-PclVariable 'HitokotoApiStatus' ('API 测试成功：' + $url)
-        Write-HitokotoLog ('自定义 API 测试成功：' + $url)
+        Set-PclVariable 'HitokotoApiStatus' ('API 测试成功：' + (Get-SafeUrlForLog -Url $url))
+        Write-HitokotoLog ('自定义 API 测试成功：' + (Get-SafeUrlForLog -Url $url))
     }
     catch {
         $message = $_.Exception.Message
@@ -593,37 +666,28 @@ function Get-QuoteItemsFromData {
 
 function Get-RemoteLibrary {
     param([string]$Url)
-    $headers = @{
-        'User-Agent'      = 'PCL-Hitokoto-Homepage/1.0'
-        'Accept'          = 'application/json'
-        'Accept-Encoding' = 'identity'
-    }
-    $response = Invoke-WebRequest -Uri $Url -Headers $headers -TimeoutSec 30 -UseBasicParsing
-    if ($null -ne $response.RawContentStream) {
-        $bytes = $response.RawContentStream.ToArray()
-        $jsonText = [System.Text.Encoding]::UTF8.GetString($bytes)
-    }
-    else {
-        $jsonText = [string]$response.Content
-    }
-
-    $jsonText = $jsonText.TrimStart([char]0xFEFF)
+    $jsonText = Get-WebText -Url $Url -TimeoutSec 30 -MaxBytes $script:MaxLibraryBytes -Label '句库响应'
     $data = $jsonText | ConvertFrom-Json
     $items = @(Get-QuoteItemsFromData -Data $data)
+    if ($items.Count -gt $script:MaxLibraryItems) {
+        throw ("句库条目过多：{0} 条，上限 {1} 条" -f $items.Count, $script:MaxLibraryItems)
+    }
     $seen = @{}
     $normalized = New-Object System.Collections.ArrayList
 
     foreach ($item in $items) {
         if ($null -eq $item) { continue }
-        $text = Get-FirstString -Item $item -Names @('text', 'hitokoto', 'content', 'quote')
+        $text = Limit-Text -Value (Get-FirstString -Item $item -Names @('text', 'hitokoto', 'content', 'quote')) -MaxLength $script:MaxQuoteTextLength
         if ([string]::IsNullOrWhiteSpace($text)) { continue }
 
         $typeRaw = Get-FirstString -Item $item -Names @('type', 'category')
         $typeName = $typeRaw
         if ($typeRaw.Length -eq 1) { $typeName = Get-TypeName $typeRaw }
         if ([string]::IsNullOrWhiteSpace($typeName)) { $typeName = '其他' }
+        $typeName = Limit-Text -Value $typeName -MaxLength 40
+        $typeRaw = Limit-Text -Value $typeRaw -MaxLength 10
 
-        $id = Get-FirstString -Item $item -Names @('id', 'uuid')
+        $id = Limit-Text -Value (Get-FirstString -Item $item -Names @('id', 'uuid')) -MaxLength $script:MaxIdLength
         $key = $id
         if ([string]::IsNullOrWhiteSpace($key)) { $key = $text }
         if ($seen.ContainsKey($key)) { continue }
@@ -640,12 +704,12 @@ function Get-RemoteLibrary {
 
         [void]$normalized.Add([pscustomobject]@{
             id        = $id
-            text      = $text.Trim()
-            source    = (Get-FirstString -Item $item -Names @('source', 'from'))
-            author    = (Get-FirstString -Item $item -Names @('author', 'from_who'))
+            text      = $text
+            source    = (Limit-Text -Value (Get-FirstString -Item $item -Names @('source', 'from')) -MaxLength $script:MaxMetaLength)
+            author    = (Limit-Text -Value (Get-FirstString -Item $item -Names @('author', 'from_who')) -MaxLength $script:MaxMetaLength)
             type      = $typeName
             typeCode  = $typeRaw
-            createdAt = $createdAt
+            createdAt = (Limit-Text -Value $createdAt -MaxLength 40)
             fetchedAt = '服务器句库'
             origin    = 'library'
         })
@@ -665,12 +729,8 @@ function Invoke-DownloadLibrary {
         Set-PclVariable 'HitokotoLibraryStatus' '请先填写句库 JSON 地址。'
         return
     }
-    if (-not ($url -match '^https?://')) {
-        Set-PclVariable 'HitokotoLibraryStatus' '句库地址必须以 http:// 或 https:// 开头。'
-        return
-    }
-    if ($url -match '[\r\n"]') {
-        Set-PclVariable 'HitokotoLibraryStatus' '句库地址不能包含英文双引号或换行。'
+    if (-not (Test-WebUrl -Url $url)) {
+        Set-PclVariable 'HitokotoLibraryStatus' '句库地址无效：仅支持 http/https，且不能包含空格、引号、账号密码或控制字符。'
         return
     }
 
@@ -686,7 +746,7 @@ function Invoke-DownloadLibrary {
         try { $hostName = ([Uri]$url).Host } catch { }
         Set-PclVariable 'HitokotoLibraryStatus' ('已下载 ' + $items.Count + ' 条句库（来源：' + $hostName + '）。搜索会一并检索。')
         Set-PclVariable 'HitokotoLibraryCount' ([string]$items.Count)
-        Write-HitokotoLog ('句库下载成功：' + $items.Count + ' 条，来源 ' + $url)
+        Write-HitokotoLog ('句库下载成功：' + $items.Count + ' 条，来源 ' + (Get-SafeUrlForLog -Url $url))
     }
     catch {
         $message = $_.Exception.Message
@@ -697,8 +757,9 @@ function Invoke-DownloadLibrary {
 
 function Invoke-Next {
     $apiUrl = Get-ApiUrl
+    $safeApiUrl = Get-SafeUrlForLog -Url $apiUrl
     Set-PclVariable 'HitokotoApiUrl' $apiUrl
-    Set-PclVariable 'HitokotoApiStatus' ('正在通过 API 获取：' + $apiUrl)
+    Set-PclVariable 'HitokotoApiStatus' ('正在通过 API 获取：' + $safeApiUrl)
 
     $cfg = Get-Config
     if (-not [string]::IsNullOrWhiteSpace($cfg.libraryUrl)) {
@@ -757,8 +818,8 @@ function Invoke-Next {
         }
         catch { }
 
-        Set-PclQuoteVariables -Quote $quote -Status '● 在线 · 已从 API 获取' -Info (Get-QuoteInfo -Quote $quote -Mode ('来源：' + $apiUrl))
-        Set-PclVariable 'HitokotoApiStatus' ('API 正常：' + $apiUrl)
+        Set-PclQuoteVariables -Quote $quote -Status '● 在线 · 已从 API 获取' -Info (Get-QuoteInfo -Quote $quote -Mode ('来源：' + $safeApiUrl))
+        Set-PclVariable 'HitokotoApiStatus' ('API 正常：' + $safeApiUrl)
         Write-HitokotoLog ("联网获取成功：{0} | {1}" -f $quote.id, $quote.text)
     }
     else {
@@ -806,7 +867,10 @@ function Clear-SearchResults {
 }
 
 function Invoke-Search {
-    param([string]$SearchQuery)
+    param(
+        [string]$SearchQuery,
+        [switch]$HideKeyword
+    )
 
     $keyword = ''
     if ($null -ne $SearchQuery) { $keyword = $SearchQuery.Trim() }
@@ -816,6 +880,10 @@ function Invoke-Search {
         Set-PclVariable -Name 'HitokotoSearchStatus' -Value '请输入关键词后再搜索。'
         return
     }
+
+    # 剪贴板里可能有密码等敏感内容：默认只显示“剪贴板内容”，不把关键词写进日志。
+    $label = '“' + $keyword + '”'
+    if ($HideKeyword) { $label = '剪贴板内容' }
 
     $all = @(Get-AllQuotes)
     $matched = @()
@@ -840,10 +908,10 @@ function Invoke-Search {
     $cacheCount = $total - $offlineCount - $libraryCount
 
     if ($total -eq 0) {
-        Set-PclVariable -Name 'HitokotoSearchStatus' -Value ('搜索“{0}”：没有找到匹配的句子。试试更短的关键词，或先点“换一句”缓存更多一言。' -f $keyword)
+        Set-PclVariable -Name 'HitokotoSearchStatus' -Value ('搜索{0}：没有找到匹配的句子。试试更短的关键词，或先点“换一句”缓存更多一言。' -f $label)
     }
     else {
-        Set-PclVariable -Name 'HitokotoSearchStatus' -Value ('搜索“{0}”：找到 {1} 条（缓存 {2} / 句库 {3} / 离线 {4}）。点击下方结果可复制。' -f $keyword, $total, $cacheCount, $libraryCount, $offlineCount)
+        Set-PclVariable -Name 'HitokotoSearchStatus' -Value ('搜索{0}：找到 {1} 条（缓存 {2} / 句库 {3} / 离线 {4}）。点击下方结果可复制。' -f $label, $total, $cacheCount, $libraryCount, $offlineCount)
     }
 
     for ($i = 1; $i -le 5; $i++) {
@@ -864,7 +932,7 @@ function Invoke-Search {
         }
     }
 
-    Write-HitokotoLog ('搜索“{0}”：匹配 {1} 条（缓存 {2} / 句库 {3} / 离线 {4}）' -f $keyword, $total, $cacheCount, $libraryCount, $offlineCount)
+    Write-HitokotoLog ('搜索（关键词长度 {0}）：匹配 {1} 条（缓存 {2} / 句库 {3} / 离线 {4}）' -f $keyword.Length, $total, $cacheCount, $libraryCount, $offlineCount)
 }
 
 function Invoke-SearchClipboard {
@@ -881,7 +949,7 @@ function Invoke-SearchClipboard {
         Set-PclVariable -Name 'HitokotoSearchStatus' -Value '剪贴板为空，请先点击“复制关键词”。'
         return
     }
-    Invoke-Search -SearchQuery $text
+    Invoke-Search -SearchQuery $text -HideKeyword
 }
 
 function Invoke-PclRefresh {
@@ -891,23 +959,30 @@ function Invoke-PclRefresh {
 
         $windows = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
 
-        # 优先按进程名匹配 PCL，避免误把标题里带 PCL 的浏览器窗口当成目标。
+        # 只匹配 PCL 本体的进程名，避免误激活浏览器或其他带 PCL 字样的窗口。
         $pcl = $windows | Where-Object {
-            $_.ProcessName -like '*Plain Craft Launcher*' -or $_.ProcessName -like '*PCL*'
+            $name = [string]$_.ProcessName
+            $name -eq 'PCL' -or $name -eq 'PCL2' -or $name -eq 'PCLCE' -or
+            $name -like 'PCL *' -or $name -like 'PCL-*' -or $name -like 'Plain Craft Launcher*'
         } | Select-Object -First 1
 
         if ($null -eq $pcl) {
-            $pcl = $windows | Where-Object {
-                $_.MainWindowTitle -like '*PCL*' -or $_.MainWindowTitle -like '*Plain Craft Launcher*'
-            } | Select-Object -First 1
+            # 标题兜底只在唯一匹配时使用，避免把“PCL 教程”之类的浏览器窗口当成 PCL。
+            $titleMatches = @($windows | Where-Object {
+                $_.MainWindowTitle -match '(?i)(^|\s)(PCL|Plain Craft Launcher)(\s|$)'
+            })
+            if ($titleMatches.Count -eq 1) { $pcl = $titleMatches[0] }
         }
 
         if ($null -eq $pcl) {
-            Write-HitokotoLog '未找到 PCL 窗口，跳过自动刷新。'
+            Write-HitokotoLog '未找到唯一的 PCL 窗口，跳过自动刷新。'
             return
         }
 
-        [Microsoft.VisualBasic.Interaction]::AppActivate($pcl.Id) | Out-Null
+        if (-not [Microsoft.VisualBasic.Interaction]::AppActivate($pcl.Id)) {
+            Write-HitokotoLog ("无法激活 PCL 窗口（PID {0}），跳过自动刷新。" -f $pcl.Id)
+            return
+        }
         Start-Sleep -Milliseconds 250
         [System.Windows.Forms.SendKeys]::SendWait('{F5}')
         Write-HitokotoLog ("已向 PCL 发送 F5（PID {0}）" -f $pcl.Id)
@@ -921,7 +996,9 @@ function Invoke-PclRefresh {
 
 try {
     Ensure-HitokotoDirs
-    Write-HitokotoLog ("开始执行：Action={0}, Query={1}" -f $Action, $Query)
+    $queryLength = 0
+    if ($null -ne $Query) { $queryLength = ([string]$Query).Length }
+    Write-HitokotoLog ("开始执行：Action={0}, QueryLength={1}" -f $Action, $queryLength)
 
     switch ($Action) {
         'next'             { Invoke-Next }
@@ -937,7 +1014,7 @@ try {
         default            { Invoke-Next }
     }
 
-    Invoke-PclRefresh
+    if (-not $NoRefresh) { Invoke-PclRefresh }
     Write-HitokotoLog '执行完成。'
     exit 0
 }
@@ -947,7 +1024,7 @@ catch {
     try {
         Set-PclVariable -Name 'HitokotoStatus' -Value ("● 出错 · {0}" -f $message)
         Set-PclVariable -Name 'HitokotoInfo' -Value '详情见 PCL\Hitokoto\hitokoto.log；可点击“刷新显示”重试。'
-        Invoke-PclRefresh
+        if (-not $NoRefresh) { Invoke-PclRefresh }
     }
     catch { }
     exit 1
