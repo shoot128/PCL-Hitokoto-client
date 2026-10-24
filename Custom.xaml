@@ -1,0 +1,499 @@
+<!--
+    PCL 一言主页 · v1.1
+    ==================================================================
+    功能：
+      - 默认联网从 https://v1.hitokoto.cn/ 获取一言，也支持自建实例；
+      - “换一句”刷新，失败时自动降级到离线库；
+      - 内置 12 条离线一言，并缓存联网获取的句子；
+      - 支持从自己的服务器下载完整 JSON 句库；
+      - 在缓存、服务器句库与离线库中搜索（点击结果可复制）；
+      - 关于板块提供 GitHub / B 站地址与“打开网页”按钮；
+      - 打开时折叠 API/句库/离线库/使用说明，关于卡片固定展开不可折叠；
+      - 注明“由 DeepSeek 辅助制作”。
+
+    重要：
+      PCL 自定义主页本身不能直接发起 HTTP 请求，也不能读取本地文件。
+      因此本主页通过同目录的 HitokotoRun.vbs 隐藏启动 Hitokoto.ps1：
+        PowerShell 联网/搜索 → 写入注册表变量 → 向 PCL 发送 F5
+      Custom.xaml 再用 variable 替换标记读取这些变量并显示。
+
+      启动器使用相对路径 HitokotoRun.vbs，VBS 再以隐藏窗口调用
+      同目录的 Hitokoto.ps1。PCL 执行命令时的工作目录是 PCL 数据
+      文件夹（通常是启动器根目录下的 PCL\），所以 Custom.xaml、
+      HitokotoRun.vbs、Hitokoto.ps1 和 Hitokoto\ 文件夹要放在一起。
+      自定义 API 与句库下载见页面里的“API 设置”“句库下载”卡片。
+-->
+
+<StackPanel.Resources>
+    <!-- 搜索结果为空时自动隐藏该行；点击结果可复制这句话。 -->
+    <Style x:Key="HitokotoResultItem" TargetType="local:MyListItem">
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Title, RelativeSource={RelativeSource Self}}" Value="（无）">
+                <Setter Property="Visibility" Value="Collapsed" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+</StackPanel.Resources>
+
+<local:MyCard Title="一言 · Hitokoto" Margin="0,0,0,15">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock x:Name="QuoteText"
+                   TextWrapping="Wrap"
+                   FontSize="19"
+                   LineHeight="30"
+                   Margin="0,0,0,8"
+                   Foreground="{DynamicResource ColorBrush1}"
+                   Text="{variable:HitokotoText:路漫漫其修远兮，吾将上下而求索。}" />
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="13"
+                   Margin="0,0,0,4"
+                   Foreground="#666666"
+                   Text="{variable:HitokotoMeta:—— 《离骚》 / 屈原 / 诗词}" />
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12"
+                   Margin="0,0,0,2"
+                   Foreground="{DynamicResource ColorBrush2}"
+                   Text="{variable:HitokotoStatus:● 离线示例 · 点击“换一句”联网获取}" />
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="11"
+                   Margin="0,0,0,6"
+                   Foreground="#888888"
+                   Text="{variable:HitokotoInfo:内置离线库与缓存说明见下方。}" />
+
+        <WrapPanel Margin="0,8,0,0">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            ColorType="Highlight"
+                            Text="换一句"
+                            ToolTip="联网获取下一条一言；失败时自动使用离线库">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在联网获取一言，请稍候……" />
+                        <local:CustomEvent Type="执行命令" Data="wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action next" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="复制这句话"
+                            ToolTip="把当前显示的一言复制到剪贴板"
+                            EventType="复制文本"
+                            EventData="{Binding Text, ElementName=QuoteText}" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="刷新显示"
+                            ToolTip="如果自动刷新没有生效，点这里重新读取数据"
+                            EventType="刷新主页" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="打开一言 API"
+                            ToolTip="在浏览器中打开 https://v1.hitokoto.cn/"
+                            EventType="打开网页"
+                            EventData="https://v1.hitokoto.cn/" />
+        </WrapPanel>
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="11"
+                   Foreground="#999999"
+                   Text="首次点击“换一句”会弹出命令执行确认，请选择“继续且今后不再要求确认”。脚本通过 HitokotoRun.vbs 隐藏运行，不会闪出控制台窗口；若页面没有自动刷新，请点“刷新显示”。" />
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="11"
+                   Foreground="#999999"
+                   Margin="0,4,0,0"
+                   Text="“API 设置”和“句库下载”在下方可折叠卡片中；关于板块可直接打开 GitHub / B 站。" />
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="搜索一言库" Margin="0,0,0,15">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12.5"
+                   Foreground="#666666"
+                   Margin="0,0,0,6"
+                   Text="检索已缓存的联网一言、从服务器下载的句库和内置离线库，支持模糊匹配、忽略英文大小写。点击搜索结果可复制该句。" />
+
+        <TextBox x:Name="SearchBox"
+                 Height="34"
+                 Margin="0,2,0,8"
+                 Padding="9,0"
+                 FontSize="13"
+                 VerticalContentAlignment="Center"
+                 Background="#F7F9FC"
+                 BorderBrush="{DynamicResource ColorBrush5}"
+                 BorderThickness="1"
+                 Foreground="#333333"
+                 MaxLength="40"
+                 ToolTip="搜索词请勿包含英文双引号；含引号时请用“复制关键词 → 从剪贴板搜索”。" />
+
+        <WrapPanel Margin="0,0,0,4">
+            <!-- 直接使用搜索框中的文本；EventData 的值由 Binding 动态生成。 -->
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            ColorType="Highlight"
+                            Text="搜索"
+                            ToolTip="在本地离线库和缓存中搜索"
+                            EventType="执行命令"
+                            EventData="{Binding Text, ElementName=SearchBox, StringFormat='wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action search -Query &quot;{0}&quot;'}">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在搜索本地一言库……" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="复制关键词"
+                            ToolTip="把搜索框中的关键词复制到剪贴板"
+                            EventType="复制文本"
+                            EventData="{Binding Text, ElementName=SearchBox}" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="从剪贴板搜索"
+                            ToolTip="读取剪贴板中的关键词并搜索；适合含英文双引号的关键词"
+                            EventType="执行命令"
+                            EventData="wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action search-clipboard">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在搜索剪贴板中的关键词……" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyTextButton Margin="4,0,10,8"
+                                Text="清空结果"
+                                ToolTip="清空下方搜索结果"
+                                EventType="执行命令"
+                                EventData="wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action clear">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在清空搜索结果……" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyTextButton>
+        </WrapPanel>
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12"
+                   Margin="0,2,0,6"
+                   Foreground="{DynamicResource ColorBrush2}"
+                   Text="{variable:HitokotoSearchStatus:输入关键词后点击“搜索”。}" />
+
+        <local:MyListItem Style="{StaticResource HitokotoResultItem}"
+                          Margin="-5,2,-5,2"
+                          Height="46"
+                          Title="{variable:HitokotoResult1Title:（无）}"
+                          Info="{variable:HitokotoResult1Info:—}"
+                          Type="Clickable"
+                          EventType="复制文本"
+                          EventData="{Binding Title, RelativeSource={RelativeSource Self}}"
+                          ToolTip="点击复制这句话" />
+        <local:MyListItem Style="{StaticResource HitokotoResultItem}"
+                          Margin="-5,2,-5,2"
+                          Height="46"
+                          Title="{variable:HitokotoResult2Title:（无）}"
+                          Info="{variable:HitokotoResult2Info:—}"
+                          Type="Clickable"
+                          EventType="复制文本"
+                          EventData="{Binding Title, RelativeSource={RelativeSource Self}}"
+                          ToolTip="点击复制这句话" />
+        <local:MyListItem Style="{StaticResource HitokotoResultItem}"
+                          Margin="-5,2,-5,2"
+                          Height="46"
+                          Title="{variable:HitokotoResult3Title:（无）}"
+                          Info="{variable:HitokotoResult3Info:—}"
+                          Type="Clickable"
+                          EventType="复制文本"
+                          EventData="{Binding Title, RelativeSource={RelativeSource Self}}"
+                          ToolTip="点击复制这句话" />
+        <local:MyListItem Style="{StaticResource HitokotoResultItem}"
+                          Margin="-5,2,-5,2"
+                          Height="46"
+                          Title="{variable:HitokotoResult4Title:（无）}"
+                          Info="{variable:HitokotoResult4Info:—}"
+                          Type="Clickable"
+                          EventType="复制文本"
+                          EventData="{Binding Title, RelativeSource={RelativeSource Self}}"
+                          ToolTip="点击复制这句话" />
+        <local:MyListItem Style="{StaticResource HitokotoResultItem}"
+                          Margin="-5,2,-5,2"
+                          Height="46"
+                          Title="{variable:HitokotoResult5Title:（无）}"
+                          Info="{variable:HitokotoResult5Info:—}"
+                          Type="Clickable"
+                          EventType="复制文本"
+                          EventData="{Binding Title, RelativeSource={RelativeSource Self}}"
+                          ToolTip="点击复制这句话" />
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="11"
+                   Foreground="#999999"
+                   Margin="0,6,0,0"
+                   Text="搜索由同目录的 Hitokoto.ps1 完成；如果脚本缺失或被安全软件拦截，搜索结果不会更新，但内置离线库仍可浏览。" />
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="关于" Margin="0,0,0,15" CanSwap="False" IsSwapped="False">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock FontSize="16" FontWeight="Bold" Text="PCL 一言主页 · v1.1" />
+        <TextBlock FontSize="13" Foreground="{DynamicResource ColorBrush2}" Margin="0,3,0,7"
+                   Text="由 DeepSeek 辅助制作" />
+        <TextBlock TextWrapping="Wrap" FontSize="12.5" Foreground="#555555" Margin="0,0,0,10"
+                   Text="主页方案、XAML、PowerShell 助手与离线库均由 DeepSeek 辅助编写；一言正文来自 hitokoto.cn、你的服务器句库与本地离线库，版权归原作者所有。" />
+
+        <WrapPanel Margin="0,0,0,4">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            ColorType="Highlight"
+                            Text="打开 项目仓库"
+                            ToolTip="在浏览器中打开项目仓库"
+                            EventType="打开网页"
+                            EventData="https://github.com/shoot128" />
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="打开 作者B站空间"
+                            ToolTip="在浏览器中打开作者B站空间"
+                            EventType="打开网页"
+                            EventData="https://space.bilibili.com/3493257902295506" />
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            ColorType="Highlight"
+                            Text="打开一言 API"
+                            ToolTip="在浏览器中打开 https://v1.hitokoto.cn/"
+                            EventType="打开网页"
+                            EventData="https://v1.hitokoto.cn/" />
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="打开 hitokoto.cn"
+                            ToolTip="在浏览器中打开 https://hitokoto.cn/"
+                            EventType="打开网页"
+                            EventData="https://hitokoto.cn/" />
+        </WrapPanel>
+
+        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#999999" Margin="0,2,0,0"
+                   Text="本主页不收集个人信息，联网获取的句子保存在 PCL\Hitokoto\quotes.json。" />
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="API 设置（支持自建实例）" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12.5"
+                   Foreground="#666666"
+                   Margin="0,0,0,6"
+                   Text="默认使用官方 API。也可以填你自己部署的一言实例根地址；脚本会自动补上 encode=json 和 charset=utf-8。自建实例返回 hitokoto 字段即可，兼容 text / quote / content 以及 data 包装。" />
+
+        <TextBox x:Name="ApiBox"
+                 Text="{variable:HitokotoApiUrl:https://v1.hitokoto.cn/}"
+                 Height="34"
+                 Margin="0,2,0,8"
+                 Padding="9,0"
+                 FontSize="13"
+                 VerticalContentAlignment="Center"
+                 Background="#F7F9FC"
+                 BorderBrush="{DynamicResource ColorBrush5}"
+                 BorderThickness="1"
+                 Foreground="#333333"
+                 MaxLength="300"
+                 ToolTip="例如 https://v1.hitokoto.cn/ 或 https://你的服务器/api/hitokoto" />
+
+        <WrapPanel Margin="0,0,0,4">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            ColorType="Highlight"
+                            Text="保存并测试"
+                            ToolTip="保存 API 地址并立即请求一句测试"
+                            EventType="执行命令"
+                            EventData="{Binding Text, ElementName=ApiBox, StringFormat='wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action set-api -ApiUrl &quot;{0}&quot;'}">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在保存并测试 API 地址……" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyTextButton Margin="4,0,10,8"
+                                Text="恢复官方 API"
+                                ToolTip="把 API 地址恢复为 https://v1.hitokoto.cn/"
+                                EventType="执行命令"
+                                EventData="wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action set-api -ApiUrl &quot;https://v1.hitokoto.cn/&quot;">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在恢复官方 API……" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyTextButton>
+        </WrapPanel>
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12"
+                   Margin="0,2,0,4"
+                   Foreground="{DynamicResource ColorBrush2}"
+                   Text="{variable:HitokotoApiStatus:当前使用官方 API。}" />
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="11"
+                   Foreground="#999999"
+                   Text="自建 HTTPS 实例需要有效证书；如果使用自签名证书，请改用受信任证书或 http 内网地址。API 地址不要包含英文双引号。" />
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="句库下载（可选）" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12.5"
+                   Foreground="#666666"
+                   Margin="0,0,0,6"
+                   Text="把自己的完整句库放到 HTTP 服务器上，填 JSON 地址后下载。支持 JSON 数组，也支持 quotes / data / results / items 包装；字段支持 text 或 hitokoto、source 或 from、author 或 from_who。" />
+
+        <TextBox x:Name="LibraryBox"
+                 Text="{variable:HitokotoLibraryUrl:https://example.com/hitokoto.json}"
+                 Height="34"
+                 Margin="0,2,0,8"
+                 Padding="9,0"
+                 FontSize="13"
+                 VerticalContentAlignment="Center"
+                 Background="#F7F9FC"
+                 BorderBrush="{DynamicResource ColorBrush5}"
+                 BorderThickness="1"
+                 Foreground="#333333"
+                 MaxLength="300"
+                 ToolTip="示例地址，请替换成你服务器上的真实 JSON 句库地址" />
+
+        <WrapPanel Margin="0,0,0,4">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            ColorType="Highlight"
+                            Text="下载完整句库"
+                            ToolTip="从服务器下载并覆盖本地 library.json"
+                            EventType="执行命令"
+                            EventData="{Binding Text, ElementName=LibraryBox, StringFormat='wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action download-library -LibraryUrl &quot;{0}&quot;'}">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在从服务器下载句库，请稍候……" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyTextButton Margin="4,0,10,8"
+                                Text="复制句库地址"
+                                ToolTip="复制输入框中的句库地址"
+                                EventType="复制文本"
+                                EventData="{Binding Text, ElementName=LibraryBox}" />
+        </WrapPanel>
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12"
+                   Margin="0,2,0,4"
+                   Foreground="{DynamicResource ColorBrush2}"
+                   Text="{variable:HitokotoLibraryStatus:尚未从服务器下载句库。}" />
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="11"
+                   Foreground="#999999"
+                   Text="下载成功后保存为 Hitokoto\library.json，搜索会一并检索；再次下载会覆盖旧句库。示例地址仅作占位，请替换成你自己的服务器地址；地址不要包含英文双引号。" />
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="内置离线一言库" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="12.5"
+                   Foreground="#666666"
+                   Margin="0,0,0,8"
+                   Text="以下句子内置在 Custom.xaml 中，断网时也能查看；联网获取的句子会追加到 Hitokoto\quotes.json，服务器下载的句库保存在 Hitokoto\library.json，搜索时会一起检索。" />
+
+        <StackPanel Margin="0,0,0,8">
+            <TextBlock TextWrapping="Wrap" FontSize="13.5" Text="路漫漫其修远兮，吾将上下而求索。" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#888888" Text="—— 《离骚》 / 屈原 / 诗词" />
+        </StackPanel>
+        <StackPanel Margin="0,0,0,8">
+            <TextBlock TextWrapping="Wrap" FontSize="13.5" Text="长风破浪会有时，直挂云帆济沧海。" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#888888" Text="—— 《行路难·其一》 / 李白 / 诗词" />
+        </StackPanel>
+        <StackPanel Margin="0,0,0,8">
+            <TextBlock TextWrapping="Wrap" FontSize="13.5" Text="海上生明月，天涯共此时。" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#888888" Text="—— 《望月怀远》 / 张九龄 / 诗词" />
+        </StackPanel>
+        <StackPanel Margin="0,0,0,8">
+            <TextBlock TextWrapping="Wrap" FontSize="13.5" Text="会当凌绝顶，一览众山小。" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#888888" Text="—— 《望岳》 / 杜甫 / 诗词" />
+        </StackPanel>
+        <StackPanel Margin="0,0,0,8">
+            <TextBlock TextWrapping="Wrap" FontSize="13.5" Text="山重水复疑无路，柳暗花明又一村。" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#888888" Text="—— 《游山西村》 / 陆游 / 诗词" />
+        </StackPanel>
+        <StackPanel Margin="0,0,0,8">
+            <TextBlock TextWrapping="Wrap" FontSize="13.5" Text="千磨万击还坚劲，任尔东西南北风。" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#888888" Text="—— 《竹石》 / 郑燮 / 诗词" />
+        </StackPanel>
+
+        <TextBlock TextWrapping="Wrap"
+                   FontSize="11"
+                   Foreground="#999999"
+                   Margin="0,2,0,8"
+                   Text="以上展示 6 条；offline.json 共内置 12 条，全部条目都可以通过上方搜索检索。" />
+
+        <WrapPanel>
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="从本地库随机一句"
+                            ToolTip="不联网，从本地缓存和内置离线库中随机取一句"
+                            EventType="执行命令"
+                            EventData="wscript.exe|//nologo &quot;HitokotoRun.vbs&quot; -Action random">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="弹出提示" Data="正在从本地一言库取一句……" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="复制离线库相对路径"
+                            ToolTip="复制 Hitokoto\quotes.json（相对于 PCL 数据文件夹）"
+                            EventType="复制文本"
+                            EventData="Hitokoto\quotes.json" />
+        </WrapPanel>
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="使用说明与已知限制" Margin="0,0,0,0" CanSwap="True" IsSwapped="True">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="1. PCL 自定义主页不能直接发起 HTTP 请求，也不能读取本地文件。本主页通过同目录的 HitokotoRun.vbs 隐藏启动 Hitokoto.ps1，由脚本完成联网、缓存和搜索，再把结果写入注册表变量，最后向 PCL 发送 F5 让页面重新读取。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="2. 需要 Windows Script Host 和 Windows PowerShell 5.1 或更高版本，并允许执行本地脚本。首次点击“换一句”或“搜索”时，PCL 会弹出命令确认，请选择“继续且今后不再要求确认”。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="3. 如果 PCL 没有自动刷新，请点击“刷新显示”。启动路径使用相对路径 HitokotoRun.vbs，只要 Custom.xaml、HitokotoRun.vbs、Hitokoto.ps1 和 Hitokoto 文件夹都放在 PCL 数据文件夹里即可，不需要写死盘符。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="4. “搜索”“保存并测试”“下载完整句库”都会把输入框文本直接作为命令参数，因此输入内容不要包含英文双引号。搜索含英文双引号时，请先用“复制关键词”，再点“从剪贴板搜索”。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="5. “API 设置”支持自建一言实例：填根地址后点“保存并测试”，脚本会自动追加 encode=json 和 charset=utf-8，并把地址保存到 Hitokoto\config.json。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="6. “句库下载”会把你服务器上的 JSON 句库保存为 Hitokoto\library.json；搜索和“从本地库随机一句”都会一并使用。再次下载会覆盖旧句库。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="7. 本页按 PCL 2.99 快照版的变量与事件机制编写。PCL 社区版（PCL CE）的自定义变量存储方式不同，未做兼容验证；如需在 CE 使用，请自行调整注册表变量与刷新方式。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="8. 一言正文版权归原作者所有；本主页仅用于学习与个人使用。离线库中的句子均为公版古诗文。" />
+    </StackPanel>
+</local:MyCard>
