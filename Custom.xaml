@@ -260,7 +260,7 @@
                             Text="打开 项目仓库"
                             ToolTip="在浏览器中打开项目仓库"
                             EventType="打开网页"
-                            EventData="https://github.com/shoot128" />
+                            EventData="https://github.com/shoot128/PCL-Hitokoto-client" />
             <local:MyButton Margin="0,0,10,8"
                             Height="35"
                             Padding="14,0,14,0"
