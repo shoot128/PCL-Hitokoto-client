@@ -47,20 +47,15 @@ https://yiyan.overpass.top/Custom.xaml.ini
 
 ## 仓库里的 `Custom.xaml`
 
-本目录的 `Custom.xaml` 是**已经渲染好的静态快照**，用于预览或在服务端不可用时作为 GitHub 静态兜底。它不会自动换句；正式更新链接请使用上面的服务器地址。
+本目录的 `Custom.xaml` 是**已经渲染好的静态快照**，用于预览或在服务端域名不可用时作为 GitHub 静态兜底。
 
-如果要把静态文件放到 GitHub Raw，至少同时上传：
-
-```text
-single/Custom.xaml
-single/Custom.xaml.ini
-```
-
-更新链接形如：
+静态兜底链接（已上传，当前可直接打开）：
 
 ```text
 https://raw.githubusercontent.com/shoot128/PCL-Hitokoto-client/main/single/Custom.xaml
 ```
+
+同目录的 `single/Custom.xaml.ini` 也已上传，所以 PCL 能正常走“版本检查 → 下载 Custom.xaml”的流程。但静态 `.ini` 不会变化，因此它不会自动换句；如果要每次启动/点击“换一句”都换，请使用上面的服务器动态链接。
 
 ## 安全边界
 
