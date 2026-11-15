@@ -20,7 +20,7 @@ PCL 会自动请求 `Custom.xaml.ini`，然后只下载一个 `Custom.xaml`。�
 https://cdn.jsdelivr.net/gh/shoot128/PCL-Hitokoto-client@main/single/Custom.xaml
 ```
 
-单文件版保留展示、复制和打开链接；本地搜索、自定义 API、完整句库下载只在下面的完整版中提供。
+单文件版保留展示、复制和打开链接，并在动态链接下支持服务端搜索；本地搜索、自定义 API、完整句库下载只在下面的完整版中提供。
 
 ## 功能
 

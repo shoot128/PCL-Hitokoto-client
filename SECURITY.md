@@ -7,8 +7,8 @@
 `single/Custom.xaml` 是另一个版本，安全边界更窄：
 
 - PCL 只从 `https://yiyan.overpass.top/Custom.xaml` 下载一个 XAML 文件；
-- 不执行 PowerShell / VBS，不读写注册表，不创建文件、服务或启动项；
-- 页面里的“换一句”只触发 PCL 的“刷新主页”，不会执行本地命令；
+- 不执行 PowerShell / VBS，不创建文件、服务或启动项；搜索时只通过 PCL 自带的“修改设置”事件改写本机的联网主页地址 `UiCustomNet`，不写注册表；
+- 页面里的“换一句”和“搜索”只触发 PCL 的“修改设置”/“刷新主页”，不会执行本地命令；搜索词直接进入本机保存的 `UiCustomNet` 地址，由 PCL 在刷新时请求；
 - 一言正文由服务端在响应时写入；服务端能看到请求 IP 和 User-Agent，与访问普通网页相同；
 - 断网时 PCL 显示上次缓存的 XAML，不会自动执行任何补偿脚本。
 
