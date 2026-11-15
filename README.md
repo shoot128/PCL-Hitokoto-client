@@ -14,6 +14,8 @@ https://yiyan.overpass.top/Custom.xaml
 
 PCL 会自动请求 `Custom.xaml.ini`，然后只下载一个 `Custom.xaml`。单文件版由服务端把当前一言写进页面，不需要 `Hitokoto.ps1`、`HitokotoRun.vbs` 或 `Hitokoto\`。
 
+> 原演示服务端 `yiyan.overpass.top` 已下线并出售；上面的动态地址需要重新部署服务端后才能使用。当前可以直接打开的是下面的静态兜底。
+
 如果域名/证书还没切好，先用 jsDelivr 静态兜底（现在可打开，但不会自动换句）：
 
 ```text
